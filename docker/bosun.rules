@@ -37,11 +37,12 @@ macro anomaly.erratic {
     $s_hist_median = percentile($g_hist, .5)
     $s_current_median = percentile(q($q_metric, $q_duration, ""), .5)
     $s_median_diff = $s_current_median - $s_hist_median
-    $s_erratic = q($q_erratic_metric, $q_erratic_period, "")
+    $s_erratic = q($q_metric, $q_period, "")
     $s_erratic_dev = (dev($s_erratic) * $s_hist_median) / ( ($s_hist_dev * median($s_erratic)) + 0.01)
     $s_median_diff_dev = ($s_current_median - $s_hist_median)/($s_hist_dev+0.01)
     $s_median_bad = $s_median_diff_dev < $g_min_med_diff
     $s_median_issues = sum(t($s_median_bad,""))
+    $graph = over($q_metric, $q_duration, $q_period, $q_lookback)
     warn = ($s_current_median > ($s_hist_median + $s_hist_dev*2) && abs($s_median_diff) > $g_std_warn) || ($s_erratic_dev > $g_max_erratic_warn && $s_median_issues > ($g_max_num_issues_crit / 2))
     crit = ($s_current_median > ($s_hist_median + $s_hist_dev*2) && abs($s_median_diff) > $g_std_crit) || ($s_erratic_dev > $g_max_erratic_crit && $s_median_issues > $g_max_num_issues_crit)
 }
@@ -85,6 +86,7 @@ template generic {
         <p>Alert definition:
         <p>Name: {{.Alert.Name}}
         <p>Crit: {{.Alert.Crit}}
+        <p>Description: {{.Alert.Vars.alertDescr}}
         <p>Tags
         <table>
                 {{range $k, $v := .Group}}
@@ -177,6 +179,8 @@ template ex {
         subject = {{.Alert.Name}}: {{.Eval .Alert.Vars.q }} on {{.Group.host}}
 }
 
+
+
 ##############
 # mem_checks #
 ##############
@@ -185,11 +189,22 @@ alert unix.memory {
     template = ex
     $metric = q("sum:mem_used_percent{host=*}", "1h", "")
     $q = avg($metric)
-    crit = $q > 99
+    crit = $q > 99.5
     warn = $q > 98
     warnNotification = default
     critNotification = default
 }
+
+alert ping.packet_loss {
+    template = ex
+    $metric = q("sum:ping_percent_packet_loss{host=*}", "1h", "")
+    $q = avg($metric)
+    crit = $q > 20
+    warn = $q > 10
+    warnNotification = default
+    critNotification = default
+}
+
 
 #alert elastic.memory {
 #    template = ex
@@ -205,23 +220,53 @@ alert unix.memory {
 # load checks #
 ###############
 
-alert unix.load {
-    #squelch = host=node*
-    template  = load
-    $time     = 30m
-    $cpucount = q("sum:system_n_cpus{host=*}", "$time", "")
-    $cpus     = avg($cpucount)
-    $load1  = q("sum:system_load1{host=*}",  "$time", "")
-    $load5  = q("sum:system_load5{host=*}",  "$time", "")
-    $load15 = q("sum:system_load15{host=*}", "$time", "")
-    $load1_avg  = avg($load1)
-    $load5_avg  = avg($load5)
-    $load15_avg = avg($load15)
-    $all = merge(rename($load1, "host=short"), rename($load5, "host=middle"), rename($load15, "host=long"), rename($cpucount, "host=cpus"))
-    crit = $load1_avg > ($cpus * 1.4) || $load5_avg > ($cpus * 1.3) || $load15_avg > ($cpus * 1.2)
-    warn = $load1_avg > ($cpus * 1.3) || $load5_avg > ($cpus * 1.2) || $load15_avg > ($cpus * 1.1)
-    warnNotification = default
+#alert unix.load {
+#    #squelch = host=node*
+#    template  = load
+#    $time     = 30m
+#    $cpucount = q("sum:system_n_cpus{host=*}", "$time", "")
+#    $cpus     = avg($cpucount)
+#    $load1  = q("sum:system_load1{host=*}",  "$time", "")
+#    $load5  = q("sum:system_load5{host=*}",  "$time", "")
+#    $load15 = q("sum:system_load15{host=*}", "$time", "")
+#    $load1_avg  = avg($load1)
+#    $load5_avg  = avg($load5)
+#    $load15_avg = avg($load15)
+#    $all = merge(rename($load1, "host=short"), rename($load5, "host=middle"), rename($load15, "host=long"), rename($cpucount, "host=cpus"))
+#    crit = $load1_avg > ($cpus * 1.4) || $load5_avg > ($cpus * 1.3) || $load15_avg > ($cpus * 1.2)
+#    warn = $load1_avg > ($cpus * 1.3) || $load5_avg > ($cpus * 1.2) || $load15_avg > ($cpus * 1.1)
+#    warnNotification = default
+#    critNotification = default
+#}
+
+alert os.cpu.low {
+    $time = 30m
+    ignoreUnknown = true
+    $alertDescr = cpu is low, as idle is low\n
+    $metric = q("sum:cpu_usage_idle{host=*,cpu=cpu-total}", "$time", "")
+    $q = avg($metric)
+    $crit_value = 5
+    $warn_value = 10
+    warn = $q < $warn_value
+    crit = $q <= $crit_value
+    template = generic
     critNotification = default
+    warnNotification = default
+}
+
+alert os.disk.io_time {
+    $time = 10m
+    ignoreUnknown = true
+    $alertDescr = disk io_time is the time spent waiting on a disk; when this is nearing 10k it means that we are spending 100% time waiting.\nThis is because the time between polling io_time is 10 seconds, or 10k milliseconds
+    $metric = q("sum:rate{counter,,1}:diskio_io_time{host=*,name=*}","$time", "")
+    $q = avg($metric)
+    $crit_value = 8000
+    $warn_value = 7000
+    warn = $q > $warn_value
+    crit = $q >= $crit_value
+    template = generic
+    critNotification = default
+    warnNotification = default
 }
 
 #################
@@ -280,7 +325,7 @@ alert unix.forecast_diskspace {
     #For graph (long time)
     $percent_free_graph = q("avg:1h-min:disk_used_percent{$filter}", "14d", "")
 
-    runEvery = 3
+    runEvery = 600
     ##Main Logic
     warn = $warn_percent || $warn_days
     crit = $crit_percent || $crit_days
@@ -434,36 +479,21 @@ template logstash.cpu_usage_idle {
     inherit = mattermost
 }
 
-
-alert pine.cpu_usage_idle {
-    template = logstash.cpu_usage_idle
-    $group = host=wildcard(pine*)
-    $idle_series_by_host = q("sum:cpu_usage_idle{cpu=wildcard(*),$group}{cpu=not_literal_or(cpu-total)}", "5m", "")
-    $idle_series_by_host_historical = q("sum:cpu_usage_idle{cpu=wildcard(*),$group}{cpu=not_literal_or(cpu-total)}", "5m", "")
-    $idle_by_host = avg($idle_series_by_host)
-    $num_hosts = len(t($idle_by_host, "cpu"))
-    $idle_total= sum(t($idle_by_host, "cpu"))
-
-    $hosts_low = t($idle_by_host < 20, "cpu")
-    $num_hosts_low = sum($hosts_low)
-    $ratio_hosts_low = ($num_hosts_low / $num_hosts)
-
-    warn = ($ratio_hosts_low > 0.7) || ($idle_total < 80)
-    crit = ($ratio_hosts_low > 0.8) || ($idle_total < 40)
-    warnNotification = default
-    critNotification = default
-}
-
 alert tsdb.added_points {
     $tpl_desc = "datapoints added per node this rate should not drop"
-    $q_duration = "1h"
+    $q_duration = "15m"
     $q_metric = "sum:rate{counter,,1}:tsd.datapoints.added{class=*,host=data*,type=*}"
     $q_period = "1h"
     $q_lookback = 6
-    $g_std_warn = 50
-    $g_std_crit = 100
+    $g_std_warn = 1
+    $g_std_crit = 2
+    $g_min_med_diff = 1
+    $g_max_erratic_warn = 1.2
+    $g_max_erratic_crit = 1.3
+    $g_max_num_issues_crit = 10
     template = anomaly
-    macro = anomaly
+    macro = anomaly.erratic
+    #runEvery = 30
     ignoreUnknown = true
     unjoinedOk = true
     critNotification = default
@@ -488,6 +518,14 @@ template anomaly {
 
         <p>Computation
         <table>
+            <tr><td>s_hist_dev</td><td>{{.Eval .Alert.Vars.s_hist_dev | printf "%.2f"}}</td></tr>
+            <tr><td>s_hist_median</td><td>{{.Eval .Alert.Vars.s_hist_median | printf "%.2f"}}</td></tr>
+            <tr><td>s_current_median</td><td>{{.Eval .Alert.Vars.s_current_median | printf "%.2f"}}</td></tr>
+            <tr><td>s_median_diff</td><td>{{.Eval .Alert.Vars.s_median_diff | printf "%.2f"}}</td></tr>
+            <tr><td>s_erratic_dev</td><td>{{.Eval .Alert.Vars.s_erratic_dev | printf "%.2f"}}</td></tr>
+            <tr><td>s_median_diff_dev</td><td>{{.Eval .Alert.Vars.s_median_diff_dev | printf "%.2f"}}</td></tr>
+            <tr><td>s_median_bad</td><td>{{.Eval .Alert.Vars.s_median_bad | printf "%.2f"}}</td></tr>
+            <tr><td>s_median_issues</td><td>{{.Eval .Alert.Vars.s_median_issues | printf "%.2f"}}</td></tr>
                 {{range .Computations}}
                         <tr><td>{{.Text}}</td><td>{{.Value}}</td></tr>
                 {{end}}
@@ -705,24 +743,24 @@ template linux.tcp {
 	subject = {{.Last.Status}}: {{.Eval .Alert.Vars.total_err | printf "%.2f"}} tcp errors on {{.Group.host}}
 }
 
-alert linux.tcp {
-	#macro = host_based
-	$notes = `
-		This alert checks for various errors or possible issues in the
-		TCP stack of a Linux host. Since these tend to happen at the
-		same time, combining them into a single alert reduces
-		notification noise.`
-	template = linux.tcp
-	$time = 1h
-	$abort_failed = change("sum:rate{counter,,1}:linux.net.stat.tcp.abortfailed{host=*}", "$time", "")
-	$abort_mem = change("sum:rate{counter,,1}:linux.net.stat.tcp.abortonmemory{host=*}", "$time", "")
-	$ofo_pruned = change("sum:rate{counter,,1}:linux.net.stat.tcp.ofopruned{host=*}", "$time", "")
-	$rcv_pruned = change("sum:rate{counter,,1}:linux.net.stat.tcp.rcvpruned{host=*}", "$time", "")
-	$backlog_drop = change("sum:rate{counter,,1}:linux.net.stat.tcp.backlogdrop{host=*}", "$time", "")
-	$syncookies_sent = change("sum:rate{counter,,1}:linux.net.stat.tcp.syncookiessent{host=*}", "$time", "")
-	$total_err = $abort_failed + $ofo_pruned + $rcv_pruned + $backlog_drop + $syncookies_sent
-	warn = $abort_failed || $ofo_pruned > 100 || $rcv_pruned > 100 || $backlog_drop > lookup("linux_tcp", "backlog_drop_threshold")  || $syncookies_sent
-}
+#alert linux.tcp {
+#	#macro = host_based
+#	$notes = `
+#		This alert checks for various errors or possible issues in the
+#		TCP stack of a Linux host. Since these tend to happen at the
+#		same time, combining them into a single alert reduces
+#		notification noise.`
+#	template = linux.tcp
+#	$time = 1h
+#	$abort_failed = change("sum:rate{counter,,1}:linux.net.stat.tcp.abortfailed{host=*}", "$time", "")
+#	$abort_mem = change("sum:rate{counter,,1}:linux.net.stat.tcp.abortonmemory{host=*}", "$time", "")
+#	$ofo_pruned = change("sum:rate{counter,,1}:linux.net.stat.tcp.ofopruned{host=*}", "$time", "")
+#	$rcv_pruned = change("sum:rate{counter,,1}:linux.net.stat.tcp.rcvpruned{host=*}", "$time", "")
+#	$backlog_drop = change("sum:rate{counter,,1}:linux.net.stat.tcp.backlogdrop{host=*}", "$time", "")
+#	$syncookies_sent = change("sum:rate{counter,,1}:linux.net.stat.tcp.syncookiessent{host=*}", "$time", "")
+#	$total_err = $abort_failed + $ofo_pruned + $rcv_pruned + $backlog_drop + $syncookies_sent
+#	warn = $abort_failed || $ofo_pruned > 100 || $rcv_pruned > 100 || $backlog_drop > lookup("linux_tcp", "backlog_drop_threshold")  || $syncookies_sent
+#}
 
 #alert nstat_linux.tcp {
 #	#macro = host_based
