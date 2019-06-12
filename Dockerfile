@@ -9,6 +9,7 @@ RUN mkdir -p /opt/bosun/bin ${GOPATH}/src/
 WORKDIR /tmp/bosun/src
 RUN git clone --depth 1 https://github.com/langerma/bosun.git bosun.org
 WORKDIR /tmp/bosun/src/bosun.org/cmd/bosun
+RUN go get
 RUN go build
 RUN cp /tmp/bosun/src/bosun.org/cmd/bosun/bosun /opt/bosun/bin/
 
