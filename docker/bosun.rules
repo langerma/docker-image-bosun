@@ -55,6 +55,30 @@ template mattermost {
   MattermostBody = `payload={"username": "bosun-bot", "text": "{{.Subject}} <{{.Incident}}|view in bosun>"}`
 }
 
+template bosun.annotation {
+  BosunBody = `{"Id":"","Message":"{{.Last.Status}}: {{.Alert.Name}}: {{.Eval .Alert.Vars.q}} on {{.Group.host}}","StartDate":"","EndDate":"","CreationUser":"bosun","Url":"{{.Ack}}","Source":"{{.Alert.Name}}","Host":"{{.Group.host}}","Owner":"langerma","Category":"{{.Last.Status}}"}`
+  BosunBodyAnomaly = `{"Id":"","Message":"{{.Last.Status}}: {{.Alert.Name}}: {{.Eval .Alert.Vars.s_current_median | printf "%.2f"}} (then: {{.Eval .Alert.Vars.s_hist_median | printf "%.2f"}})","StartDate":"","EndDate":"","CreationUser":"bosun","Url":"{{.Ack}}","Source":"{{.Alert.Name}}","Host":"{{.Group.host}}","Owner":"langerma","Category":"{{.Last.Status}}"}`
+  BosunBodyElastic = `{"Id":"","Message":"{{.Last.Status}}: {{.Alert.Name}}: {{.Eval .Alert.Vars.qmax}} on {{index .Group "host.name.keyword"}}","StartDate":"","EndDate":"","CreationUser":"bosun","Url":"{{.Ack}}","Source":"{{.Alert.Name}}","Host":"{{index .Group "host.name.keyword"}}","Owner":"langerma","Category":"{{.Last.Status}}"}`
+}
+
+notification bosun.annotation {
+  post = http://127.0.0.1:8070/api/annotation
+  bodyTemplate = BosunBody
+  contentType = application/json
+}
+
+notification bosun.annotation.anomaly {
+  post = http://127.0.0.1:8070/api/annotation
+  bodyTemplate = BosunBodyAnomaly
+  contentType = application/json
+}
+
+notification bosun.annotation.elastic {
+  post = http://127.0.0.1:8070/api/annotation
+  bodyTemplate = BosunBodyElastic
+  contentType = application/json
+}
+
 notification mattermost {
   post = http://gevispoc.eb.lan.at/hooks/hh4a9kjpepri383j4s7pn7f9zw
   #select slack body template
@@ -107,6 +131,7 @@ template generic {
         </br>
         {{.Graph .Alert.Vars.metric}}`
         subject = {{.Last.Status}}: {{.Alert.Name}}: {{.Eval .Alert.Vars.q}} on {{.Group.host}}
+        inherit = bosun.annotation
 }
 
 template weblog.rtm {
@@ -177,6 +202,7 @@ template ex {
         {{.Graph .Alert.Vars.metric}}
         `
         subject = {{.Alert.Name}}: {{.Eval .Alert.Vars.q }} on {{.Group.host}}
+        inherit = bosun.annotation
 }
 
 
@@ -186,35 +212,82 @@ template ex {
 ##############
 
 alert unix.memory {
-    template = ex
-    $metric = q("sum:mem_used_percent{host=*}", "1h", "")
+    template = generic
+    $metric = q("sum:mem_used_percent{host=*}", "5m", "")
     $q = avg($metric)
     crit = $q > 99.5
     warn = $q > 98
-    warnNotification = default
-    critNotification = default
+    runEvery = 300
+    ignoreUnknown = true
+    warnNotification = default,bosun.annotation
+    critNotification = default,bosun.annotation
 }
+
+################
+# bsd upgrades #
+################
+
+alert bsd.pkg.security {
+    template = ex
+    $metric = q("sum:pkg_nagios_value{host=*,perfdata=security_problems,unit=i}", "5m", "")
+    $q = max($metric)
+    crit = $q > 1
+    warn = $q > 0
+    #ignoreUnknown = true
+    unknown = 5m
+    warnNotification = default,bosun.annotation
+    critNotification = default,bosun.annotation
+}
+
+alert bsd.pkg.update {
+    template = ex
+    $metric = q("sum:pkg_nagios_value{host=*,perfdata=total_updates,unit=i}", "5m", "")
+    $q = max($metric)
+    crit = $q > 8
+    warn = $q > 5
+    #ignoreUnknown = true
+    unknown = 5m
+    warnNotification = default,bosun.annotation
+    critNotification = default,bosun.annotation
+}
+
+######################
+# connectivity check #
+######################
 
 alert ping.packet_loss {
     template = ex
-    $metric = q("sum:ping_percent_packet_loss{host=*}", "1h", "")
+    $metric = q("sum:ping_percent_packet_loss{host=*}", "5m", "")
     $q = avg($metric)
-    crit = $q > 20
-    warn = $q > 10
-    warnNotification = default
-    critNotification = default
+    crit = $q > 9
+    warn = $q > 8
+    unknown = 5m
+    warnNotification = default,bosun.annotation
+    critNotification = default,bosun.annotation
+}
+
+alert ping.average_response {
+    template = ex
+    $metric = q("sum:ping_average_response_ms{host=*}", "10m", "")
+    $q = avg($metric)
+    crit = $q > 80
+    warn = $q > 75
+    unknown = 5m
+    warnNotification = default,bosun.annotation
+    critNotification = default,bosun.annotation
 }
 
 
-#alert elastic.memory {
-#    template = ex
-#    $metric = q("sum:elasticsearch_jvm_mem_heap_used_percent{host=*}", "30m", "")
-#    $q      = avg($metric)
-#    crit = $q > 95
-#    warn = $q > 90
-#    warnNotification = default
-#    critNotification = default
-#}
+alert elastic.memory {
+    template = ex
+    $metric = q("sum:elasticsearch_jvm_mem_heap_used_percent{host=*}", "30m", "")
+    $q      = avg($metric)
+    crit = $q > 95
+    warn = $q > 90
+    unknown = 5m
+    warnNotification = default,bosun.annotation
+    critNotification = default,bosun.annotation
+}
 
 ###############
 # load checks #
@@ -240,7 +313,7 @@ alert ping.packet_loss {
 #}
 
 alert os.cpu.low {
-    $time = 30m
+    $time = 5m
     ignoreUnknown = true
     $alertDescr = cpu is low, as idle is low\n
     $metric = q("sum:cpu_usage_idle{host=*,cpu=cpu-total}", "$time", "")
@@ -250,12 +323,13 @@ alert os.cpu.low {
     warn = $q < $warn_value
     crit = $q <= $crit_value
     template = generic
-    critNotification = default
-    warnNotification = default
+    unknown = 5m
+    critNotification = default,bosun.annotation
+    warnNotification = default,bosun.annotation
 }
 
 alert os.disk.io_time {
-    $time = 10m
+    $time = 5m
     ignoreUnknown = true
     $alertDescr = disk io_time is the time spent waiting on a disk; when this is nearing 10k it means that we are spending 100% time waiting.\nThis is because the time between polling io_time is 10 seconds, or 10k milliseconds
     $metric = q("sum:rate{counter,,1}:diskio_io_time{host=*,name=*}","$time", "")
@@ -265,8 +339,9 @@ alert os.disk.io_time {
     warn = $q > $warn_value
     crit = $q >= $crit_value
     template = generic
-    critNotification = default
-    warnNotification = default
+    unknown = 5m
+    critNotification = default,bosun.annotation
+    warnNotification = default,bosun.annotation
 }
 
 #################
@@ -301,18 +376,18 @@ template diskspace {
 
 lookup disk_space {
     entry host=*,path=*,fstype=* {
-        warn_percent_free = 10
-        crit_percent_free = 5
+        warn_percent_free = 5
+        crit_percent_free = 2
     }
 }
 
 alert unix.forecast_diskspace {
     template = diskspace
-    $filter = host=*,path=*,fstype=literal_or(zfs|ext4)
+    $filter = host=*,path=*,fstype=literal_or(zfs|ext4|xfs)
 
     $days_to_zero = (forecastlr(q("avg:6h-avg:disk_used_percent{$filter}", "14d", ""), 100) / 60 / 60 / 24)
-    $warn_days = $days_to_zero > 0 && $days_to_zero < 4
-    $crit_days =   $days_to_zero > 0 && $days_to_zero < 3
+    $warn_days = $days_to_zero > 0 && $days_to_zero < 3
+    $crit_days =   $days_to_zero > 0 && $days_to_zero < 2
 
     ##Percent Free Section
     $pf_time = "5m"
@@ -325,7 +400,7 @@ alert unix.forecast_diskspace {
     #For graph (long time)
     $percent_free_graph = q("avg:1h-min:disk_used_percent{$filter}", "14d", "")
 
-    runEvery = 600
+    runEvery = 60
     ##Main Logic
     warn = $warn_percent || $warn_days
     crit = $crit_percent || $crit_days
@@ -333,6 +408,7 @@ alert unix.forecast_diskspace {
     ignoreUnknown = true
     #This is needed because disks go away when the forecast doesn't
     unjoinedOk = true
+    #unknown = 5m
     warnNotification = default
     critNotification = default
 }
@@ -359,21 +435,24 @@ template haproxy {
         </br>
         {{.Graph .Alert.Vars.all}}`
         subject = {{.Last.Status}}: {{.Alert.Name}} on {{.Group.host}} sessions: {{.Eval .Alert.Vars.current_sessions | printf "%.0f" }} from  {{.Eval .Alert.Vars.session_limit | printf "%.0f" }} used
-        inherit = mattermost
+        inherit = bosun.annotation
 }
 
 alert haproxy.session_limit {
     template = haproxy
-    $current_sessions = max(q("sum:haproxy_scur{host=*,proxy=*,type=frontend}", "5m", ""))
-    $session_limit = max(q("sum:haproxy_slim{host=*,proxy=*,type=frontend}", "5m", ""))
-    $current_sessions_metric = q("sum:haproxy_scur{host=*,proxy=*,type=frontend}", "30m", "")
-    $session_limit_metric = q("sum:haproxy_slim{host=*,proxy=*,type=frontend}", "30m", "")
+    $current_sessions_metric = q("sum:haproxy_scur{host=*,proxy=*,type=frontend}", "10m", "")
+    $session_limit_metric = q("sum:haproxy_slim{host=*,proxy=*,type=frontend}", "10m", "")
+    $current_sessions = max($current_sessions_metric)
+    $session_limit = max($session_limit_metric)
     $all = merge(rename($current_sessions_metric, "host=current"), rename($session_limit_metric, "host=limit"))
     $q = ($current_sessions / $session_limit) * 100
-    warn = $q > 80
-    crit = $q > 95
-    warnNotification = default
-    critNotification = default
+    warn = $q > 90
+    crit = $q > 98
+    unjoinedOk = true
+    ignoreUnknown = true
+    unknown = 5m
+    warnNotification = default,bosun.annotation
+    critNotification = default,bosun.annotation
 }
 
 ### check elastic datanodes
@@ -411,7 +490,7 @@ alert haproxy.session_limit {
 #    warnNotification = default,thomas,leibrecht
 #}
 
-template api.sparkasse.at.response.5xx {
+template elastic.error {
         body = `<a href="{{.Ack}}">Acknowledge alert</a>
         <p>Alert definition:
         <p>Name: {{.Alert.Name}}
@@ -420,9 +499,9 @@ template api.sparkasse.at.response.5xx {
         <table>
                 {{range $k, $v := .Group}}
                         {{if eq $k "host"}}
-                                <tr><td>{{$k}}</td><td><a href="{{$.HostView $v}}">{{$v}}</a></td></tr>
+                                <tr><td>{{$k}}:</td><td><a href="{{$.HostView $v}}">{{$v}}</a></td></tr>
                         {{else}}
-                                <tr><td>{{$k}}</td><td>{{$v}}</td></tr>
+                                <tr><td>{{$k}}:</td><td>{{$v}}</td></tr>
                         {{end}}
                 {{end}}
         </table>
@@ -435,8 +514,8 @@ template api.sparkasse.at.response.5xx {
         </table>
         </br>
         {{.Graph .Alert.Vars.graph}}`
-        subject = {{.Last.Status}}: {{.Alert.Name}}: {{.Eval .Alert.Vars.qmax}} on api.sparkasse.at
-        inherit = mattermost
+        subject = {{.Last.Status}}: {{.Alert.Name}}: {{.Eval .Alert.Vars.qmax}} on {{index .Group "host.name.keyword"}}
+        inherit = bosun.annotation
 }
 
 #alert api.sparkasse.at.response.5xx {
@@ -450,6 +529,36 @@ template api.sparkasse.at.response.5xx {
 #    crit = $qmax > 1000
 #    critNotification = default,thomas,MLDevOpsGeorgeATsIT,leibrecht,mattermost
 #}
+
+alert elastic.hbase {
+    template = elastic.error
+    $index = esmonthly("@timestamp","hbase-","2006.01")
+    $filter=esquery("severity", "WARN or ERROR")
+    $q=escount($index, "host.name.keyword", $filter, "1m", "15m", "")
+    $graph=escount($index, "severity.keyword", $filter, "1m", "15m", "")
+    $qmax=max($q)
+    #ignoreUnknown = false
+    unknownIsNormal = true
+    warn = $qmax > 150
+    crit = $qmax > 300
+    warnNotification = default,bosun.annotation.elastic
+    critNotification = default,bosun.annotation.elastic
+}
+
+alert elastic.hadoop {
+    template = elastic.error
+    $index = esmonthly("@timestamp","hadoop-","2006.01")
+    $filter=esquery("severity", "WARN or ERROR")
+    $q=escount($index, "host.name.keyword", $filter, "1m", "15m", "")
+    $graph=escount($index, "severity.keyword", $filter, "1m", "15m", "")
+    $qmax=max($q)
+    #ignoreUnknown = false
+    unknownIsNormal = true
+    warn = $qmax > 100
+    crit = $qmax > 200
+    warnNotification = default,bosun.annotation.elastic
+    critNotification = default,bosun.annotation.elastic
+}
 
 ############################
 # logstash "cluster" check #
@@ -481,23 +590,71 @@ template logstash.cpu_usage_idle {
 
 alert tsdb.added_points {
     $tpl_desc = "datapoints added per node this rate should not drop"
-    $q_duration = "15m"
+    $q_duration = "60m"
     $q_metric = "sum:rate{counter,,1}:tsd.datapoints.added{class=*,host=data*,type=*}"
     $q_period = "1h"
-    $q_lookback = 6
+    $q_lookback = 7
     $g_std_warn = 1
     $g_std_crit = 2
     $g_min_med_diff = 1
     $g_max_erratic_warn = 1.2
     $g_max_erratic_crit = 1.3
-    $g_max_num_issues_crit = 10
+    $g_max_num_issues_crit = 30
     template = anomaly
     macro = anomaly.erratic
-    #runEvery = 30
+    runEvery = 30
     ignoreUnknown = true
     unjoinedOk = true
-    critNotification = default
-    warnNotification = default
+    #unknown = 5m
+    critNotification = bosun.annotation.anomaly
+    warnNotification = bosun.annotation.anomaly
+}
+
+alert environment.temperature {
+    $time = 30m
+    #ignoreUnknown = true
+    $alertDescr =  if temp is to high or to low\n
+    $t1 = q("sum:sensehat_exec_temperature_humidity{host=*}{}", "$time", "")
+    $t2 = q("sum:sensehat_exec_temperature_pressure{host=*}{}", "$time", "")
+    $t_cpu = avg(q("sum:sensehat_exec_temperature_cpu{host=*}{}", "$time", ""))
+    $t = (($t1 + $t2) / 2)
+    $t_corr = $t - (($t_cpu - $t)/1.2)
+    $metric_simple = $t_corr
+    $q = avg($metric_simple)
+    $crit_high_value = 30
+    $warn_high_value = 28
+    $crit_low_value = 18
+    $warn_low_value = 20
+    warn = $q > $warn_high_value || $q < $warn_low_value
+    crit = $q >= $crit_high_value || $q <= $crit_low_value
+    $now = epoch()
+    $Ago =  $now-d("$time")
+    $metric = merge(series("warn_low=$warn_low_value", $Ago, $warn_low_value, $now, $warn_low_value), series("warn_high=$warn_high_value", $Ago, $warn_high_value, $now, $warn_high_value), series("crit_low=$crit_low_value", $Ago, $crit_low_value, $now, $crit_low_value),series("crit_high=$crit_high_value", $Ago, $crit_high_value, $now, $crit_high_value), $metric_simple)
+    template = generic
+    unknown = 5m
+    critNotification = default,bosun.annotation
+    warnNotification = default,bosun.annotation
+}
+
+alert environment.humidity {
+    $time = 30m
+    #ignoreUnknown = true
+    $alertDescr = checks for humidity in livingroom\n
+    $metric_simple = q("sum:sensehat_exec_humidity{host=*}", "$time", "")
+    $q = avg($metric_simple)
+    $crit_low_value = 33
+    $warn_low_value = 35
+    $crit_high_value = 58
+    $warn_high_value = 56
+    warn = $q < $warn_low_value || $q > $warn_high_value
+    crit = $q <= $crit_low_value || $q >= $crit_high_value
+    $now = epoch()
+    $Ago =  $now-d("$time")
+    $metric = merge(series("warn_low=$warn_low_value", $Ago, $warn_low_value, $now, $warn_low_value), series("warn_high=$warn_high_value", $Ago, $warn_high_value, $now, $warn_high_value), series("crit_low=$crit_low_value", $Ago, $crit_low_value, $now, $crit_low_value),series("crit_high=$crit_high_value", $Ago, $crit_high_value, $now, $crit_high_value), $metric_simple)
+    template = generic
+    unknown = 5m
+    critNotification = default,bosun.annotation
+    warnNotification = default,bosun.annotation
 }
 
 template anomaly {
@@ -533,14 +690,14 @@ template anomaly {
         </br>
         {{.Graph .Alert.Vars.graph}}`
         subject = {{.Last.Status}}: {{.Alert.Name}}: {{.Eval .Alert.Vars.s_current_median | printf "%.2f"}} (then: {{.Eval .Alert.Vars.s_hist_median | printf "%.2f"}}) on {{.Group.host}}
-        inherit = mattermost
+        inherit = bosun.annotation
 }
 
 alert elastic.index_events {
     $tpl_desc = "events indexed over all elastic nodes this rate should not drop"
     $q_duration = "1h"
     $q_metric = "sum:rate:elasticsearch_indices_indexing_index_total{host=wildcard(*)}"
-    $q_period = "7d"
+    $q_period = "1h"
     $q_lookback = 4
     $g_std_warn = 900
     $g_std_crit = 1200
@@ -548,8 +705,10 @@ alert elastic.index_events {
     macro = anomaly
     ignoreUnknown = true
     unjoinedOk = true
-    critNotification = default
-    warnNotification = default
+    runEvery = 60
+    #unknown = 5m
+    critNotification = default,bosun.annotation.anomaly
+    warnNotification = default,bosun.annotation.anomaly
 }
 
 
@@ -578,14 +737,14 @@ template elastic.index_time {
         </br>
         {{.Graph .Alert.Vars.graph}}`
         subject = {{.Last.Status}}: {{.Alert.Name}}: indexing time is {{.Eval .Alert.Vars.s_current_median | printf "%.2f"}}ms (then: {{.Eval .Alert.Vars.s_hist_median | printf "%.2f"}}ms) on {{.Group.host}}
-    inherit = mattermost
+    inherit = bosun.annotation
 }
 
 alert elastic.index_time {
     $tpl_desc = "index time over all elastic nodes this rate should not rise"
     $q_duration = "1h"
     $q_metric = "sum:rate:elasticsearch_indices_indexing_index_time_in_millis{host=wildcard(*)}"
-    $q_period = "7d"
+    $q_period = "1h"
     $q_lookback = 4
     $g_std_warn = 200
     $g_std_crit = 300
@@ -593,24 +752,26 @@ alert elastic.index_time {
     macro = anomaly.inverted
     ignoreUnknown = true
     unjoinedOk = true
-    critNotification = default
-    warnNotification = default
+    runEvery = 60
+    #unknown = 5m
+    critNotification = default,bosun.annotation.anomaly
+    warnNotification = default,bosun.annotation.anomaly
 }
 
 ################
 # cisco checks #
 ################
 
-alert cisco.load {
-	template = ex
-	$metric_short  = avg(q("sum:snmp_cpmCPUTotal5sec{host=*}", "120m", ""))
-	$metric_middle = avg(q("sum:snmp_cpmCPUTotal1min{host=*}", "120m", ""))
-	$metric_long   = avg(q("sum:snmp_cpmCPUTotal5min{host=*}", "120m", ""))
-	crit = $metric_short > 85 || $metric_middle > 80 || $metric_long > 75
-	warn = $metric_short > 80 || $metric_middle > 75 || $metric_long > 70
-    warnNotification = default
-    critNotification = default
-}
+#alert cisco.load {
+#	template = ex
+#	$metric_short  = avg(q("sum:snmp_cpmCPUTotal5sec{host=*}", "120m", ""))
+#	$metric_middle = avg(q("sum:snmp_cpmCPUTotal1min{host=*}", "120m", ""))
+#	$metric_long   = avg(q("sum:snmp_cpmCPUTotal5min{host=*}", "120m", ""))
+#	crit = $metric_short > 85 || $metric_middle > 80 || $metric_long > 75
+#	warn = $metric_short > 80 || $metric_middle > 75 || $metric_long > 70
+#    warnNotification = default
+#    critNotification = default
+#}
 
 ############
 # hardware #
