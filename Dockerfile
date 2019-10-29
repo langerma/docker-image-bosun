@@ -1,9 +1,10 @@
 FROM alpine
 
 RUN apk --update add rsyslog bash wget
-RUN apk --update add --virtual builddeps build-base git go
+RUN apk --update add --virtual builddeps build-base git bzr go
 
 ENV GOPATH /tmp/bosun
+ENV GO111MODULE on
 
 RUN mkdir -p /opt/bosun/bin ${GOPATH}/src/
 WORKDIR /tmp/bosun/src
