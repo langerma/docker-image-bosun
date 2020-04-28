@@ -4,8 +4,7 @@ FROM golang AS builder
 RUN git clone --depth 1 https://github.com/langerma/bosun.git /bosun
 
 WORKDIR /bosun/cmd/bosun
-RUN go build
-
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bosun .
 #copy over
 FROM alpine:latest
 
