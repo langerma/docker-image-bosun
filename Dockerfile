@@ -1,26 +1,17 @@
-FROM alpine
+# build bosun binary
+FROM golang AS builder
 
-RUN apk --update add rsyslog bash wget
-RUN apk --update add --virtual builddeps build-base git go
+RUN git clone --depth 1 https://github.com/langerma/bosun.git /bosun
 
-ENV GOPATH /tmp/bosun
-ENV GO111MODULE off
-
-RUN mkdir -p /opt/bosun/bin ${GOPATH}/src/
-WORKDIR /tmp/bosun/src
-RUN git clone --depth 1 https://github.com/langerma/bosun.git bosun.org
-WORKDIR /tmp/bosun/src/bosun.org/cmd/bosun
-RUN go get
+WORKDIR /bosun/cmd/bosun
 RUN go build
-RUN cp /tmp/bosun/src/bosun.org/cmd/bosun/bosun /opt/bosun/bin/
 
-RUN rm -rf ${GOPATH}
-RUN apk del builddeps
-RUN apk del build-base
-RUN apk del go
-RUN rm -rf /var/cache/apk/*
+#copy over
+FROM alpine:latest
 
-RUN mkdir -p /opt/bin/ /etc/bosun
+RUN apk --no-cache add ca-certificates
+RUN mkdir -p /opt/bosun/bin /opt/bin /etc/bosun
+COPY --from=builder /bosun/cmd/bosun/bosun /opt/bosun/bin/
 ADD docker/start_bosun.sh /opt/bin/
 ADD docker/bosun.conf /etc/bosun/bosun.conf
 ADD docker/bosun.rules /etc/bosun/bosun.rules
