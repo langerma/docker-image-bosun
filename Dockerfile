@@ -12,6 +12,7 @@ RUN apk --no-cache add ca-certificates
 RUN mkdir -p /opt/bosun/bin /opt/bin /etc/bosun
 COPY --from=builder /bosun/cmd/bosun/bosun /opt/bosun/bin/
 ADD docker/start_bosun.sh /opt/bin/
+RUN chmod +x /opt/bin/start_bosun.sh
 ADD docker/bosun.conf /etc/bosun/bosun.conf
 ADD docker/bosun.rules /etc/bosun/bosun.rules
 

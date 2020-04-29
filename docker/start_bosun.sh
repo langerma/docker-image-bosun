@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 BOSUN=/opt/bosun/bin/bosun
 CONFIG_FILE=/etc/bosun/bosun.conf
