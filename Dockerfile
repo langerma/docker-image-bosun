@@ -1,7 +1,7 @@
 # build bosun binary
 FROM golang AS builder
 
-RUN git clone --depth 1 https://github.com/langerma/bosun.git /bosun
+RUN git clone --depth 1 https://github.com/bosun-monitor/bosun.git /bosun
 
 WORKDIR /bosun/cmd/bosun
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bosun .
