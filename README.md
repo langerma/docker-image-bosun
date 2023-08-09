@@ -9,3 +9,5 @@ there are 2 volumes:
 * /var/run/bosun
 
 config should be placed in /etc/bosun
+
+sample config files are provided
