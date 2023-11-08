@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build .
 #copy over
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates git
 RUN mkdir -p /opt/bosun/bin /opt/bin /etc/bosun
 COPY --from=builder /bosun/cmd/bosun/bosun /opt/bosun/bin/
 ADD docker/start_bosun.sh /opt/bin/
